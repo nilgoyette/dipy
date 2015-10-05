@@ -1,5 +1,7 @@
+
 from dipy.segment.featurespeed import (Feature,
                                        IdentityFeature,
+                                       ResampleFeature,
                                        CenterOfMassFeature)
 
 from dipy.segment.metricspeed import (Metric,

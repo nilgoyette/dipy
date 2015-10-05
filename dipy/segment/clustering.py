@@ -1,7 +1,9 @@
+
 import operator
 import numpy as np
 
 from dipy.segment.metric import Metric
+from dipy.segment.metric import ResampleFeature
 from dipy.segment.metric import AveragePointwiseEuclideanMetric
 
 
@@ -426,14 +428,17 @@ class QuickBundles(Clustering):
                         tractography simplification, Frontiers in Neuroscience,
                         vol 6, no 175, 2012.
     """
-    def __init__(self, threshold, metric="MDF", max_nb_clusters=np.iinfo('i4').max):
+    def __init__(self, threshold, metric="MDF_12points", max_nb_clusters=np.iinfo('i4').max):
         self.threshold = threshold
         self.max_nb_clusters = max_nb_clusters
 
         if isinstance(metric, Metric):
             self.metric = metric
-        elif metric.upper() == "MDF":
-            self.metric = AveragePointwiseEuclideanMetric()
+        elif metric == "MDF_12points":
+            feature = ResampleFeature(nb_points=12)
+            self.metric = AveragePointwiseEuclideanMetric(feature)
+        else:
+            raise ValueError("Unknown metric: {0}".format(metric))
 
     def cluster(self, streamlines, ordering=None, refdata=None):
         """ Clusters `streamlines` into bundles.

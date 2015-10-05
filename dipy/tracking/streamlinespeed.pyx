@@ -12,13 +12,6 @@ cdef extern from "stdlib.h" nogil:
     void free(void *ptr)
     void *malloc(size_t size)
 
-ctypedef float[:,:] float2d
-ctypedef double[:,:] double2d
-
-ctypedef fused Streamline:
-    float2d
-    double2d
-
 
 cdef double _length(Streamline streamline) nogil:
     cdef:
@@ -145,6 +138,53 @@ cdef void _arclengths(Streamline streamline, double* out) nogil:
             out[i] += dn*dn
 
         out[i] = out[i-1] + sqrt(out[i])
+
+
+cdef void c_set_number_of_points(Streamline streamline, Streamline out) nogil:
+    cdef:
+        np.npy_intp N = streamline.shape[0]
+        np.npy_intp D = streamline.shape[1]
+        np.npy_intp new_N = out.shape[0]
+        double ratio, step, next_point
+        np.npy_intp i, j, k, dim
+
+    # Get arclength at each point.
+    arclengths = <double*> malloc(streamline.shape[0] * sizeof(double))
+    _arclengths(streamline, arclengths)
+
+    step = arclengths[N-1] / (new_N-1)
+
+    next_point = 0.0
+    i = 0
+    j = 0
+    k = 0
+
+    while next_point < arclengths[N-1]:
+        if next_point == arclengths[k]:
+            for dim in range(D):
+                out[i,dim] = streamline[j,dim];
+
+            next_point += step
+            i += 1
+            j += 1
+            k += 1
+        elif next_point < arclengths[k]:
+            ratio = 1 - ((arclengths[k]-next_point) / (arclengths[k]-arclengths[k-1]))
+
+            for dim in range(D):
+                out[i,dim] = streamline[j-1,dim] + ratio * (streamline[j,dim] - streamline[j-1,dim])
+
+            next_point += step
+            i += 1
+        else:
+            j += 1
+            k += 1
+
+    # Last resampled point always the one from orignal streamline.
+    for dim in range(D):
+        out[new_N-1,dim] = streamline[N-1,dim]
+
+    free(arclengths)
 
 
 cdef void _set_number_of_points(Streamline streamline, Streamline out) nogil:
