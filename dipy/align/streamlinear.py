@@ -11,7 +11,7 @@ from dipy.tracking.streamline import (transform_streamlines,
                                       set_number_of_points,
                                       select_random_set_of_streamlines,
                                       length)
-from dipy.segment.clustering import QuickBundles
+from dipy.segment.clustering import QuickBundles, qbx_with_merge
 from dipy.core.geometry import (compose_transformations,
                                 compose_matrix,
                                 decompose_matrix)
@@ -786,7 +786,6 @@ def whole_brain_slr(static, moving,
             return True
         else:
             return False
-
     streamlines1 = [s for s in static if check_range(s)]
     streamlines2 = [s for s in moving if check_range(s)]
 
@@ -802,12 +801,13 @@ def whole_brain_slr(static, moving,
                                                          select_random)
     else:
         rstreamlines1 = streamlines1
-
-    rstreamlines1 = set_number_of_points(rstreamlines1, nb_pts)
-    qb1 = QuickBundles(threshold=qb_thr)
-    rstreamlines1 = [s.astype('f4') for s in rstreamlines1]
-    cluster_map1 = qb1.cluster(rstreamlines1)
-    clusters1 = remove_clusters_by_size(cluster_map1, rm_small_clusters)
+    threshold = [40, 30, 20, qb_thr]
+    qb1 = qbx_with_merge(rstreamlines1, threshold, nb_pts)
+    #rstreamlines1 = set_number_of_points(rstreamlines1, nb_pts)
+    #qb1 = QuickBundles(threshold=qb_thr)
+    #rstreamlines1 = [s.astype('f4') for s in rstreamlines1]
+    #cluster_map1 = qb1.cluster(rstreamlines1)
+    clusters1 = remove_clusters_by_size(qb1, rm_small_clusters)
     qb_centroids1 = [cluster.centroid for cluster in clusters1]
 
     if select_random is not None:
@@ -816,11 +816,12 @@ def whole_brain_slr(static, moving,
     else:
         rstreamlines2 = streamlines2
 
-    rstreamlines2 = set_number_of_points(rstreamlines2, nb_pts)
-    qb2 = QuickBundles(threshold=qb_thr)
-    rstreamlines2 = [s.astype('f4') for s in rstreamlines2]
-    cluster_map2 = qb2.cluster(rstreamlines2)
-    clusters2 = remove_clusters_by_size(cluster_map2, rm_small_clusters)
+    qb2 = qbx_with_merge(rstreamlines2, threshold, nb_pts)
+    #rstreamlines2 = set_number_of_points(rstreamlines2, nb_pts)
+    #qb2 = QuickBundles(threshold=qb_thr)
+    #rstreamlines2 = [s.astype('f4') for s in rstreamlines2]
+    #cluster_map2 = qb2.cluster(rstreamlines2)
+    clusters2 = remove_clusters_by_size(qb2, rm_small_clusters)
     qb_centroids2 = [cluster.centroid for cluster in clusters2]
 
     t = time()
