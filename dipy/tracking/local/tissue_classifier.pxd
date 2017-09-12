@@ -30,7 +30,6 @@ cdef class ConstrainedTissueClassifier(TissueClassifier):
         double[:, :, :] include_map, exclude_map
     cpdef double get_exclude(self, double[::1] point)
     cpdef double get_include(self, double[::1] point)
-    pass
 
 cdef class ActTissueClassifier(ConstrainedTissueClassifier):
     pass

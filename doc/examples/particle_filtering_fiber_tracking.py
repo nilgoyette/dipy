@@ -22,6 +22,8 @@ data, fitting a Constrained Spherical Deconvolution (CSD) reconstruction
 model and creating the probabilistic direction getter.
 """
 
+from datetime import datetime
+
 import numpy as np
 
 from dipy.data import (read_stanford_labels, default_sphere,
@@ -35,7 +37,7 @@ from dipy.tracking import utils
 from dipy.viz import fvtk
 from dipy.viz.colormap import line_colors
 
-
+start = datetime.now()
 ren = fvtk.ren()
 
 img_pve_csf, img_pve_gm, img_pve_wm = read_stanford_pve_maps()
@@ -68,7 +70,6 @@ ACT uses a fixed threshold on the PVE maps. Both tissue classifier can be used
 in conjunction PFT. In this exemple, we used CMC.
 """
 
-import matplotlib.pyplot as plt
 from dipy.tracking.local import CmcTissueClassifier
 
 voxel_size = np.average(img_pve_wm.get_header()['pixdim'][1:4])
@@ -83,44 +84,32 @@ cmc_classifier = CmcTissueClassifier.from_pve(img_pve_wm.get_data(),
 # seeds are place in voxel of the corpus callosum containing only white matter
 seed_mask = labels == 2
 seed_mask[img_pve_wm.get_data() < 0.5] = 0
-seeds = utils.seeds_from_mask(seed_mask, density=2, affine=affine)
+seeds = utils.seeds_from_mask(seed_mask, density=3, affine=affine)
+print len(seeds)
+print 'time', datetime.now() - start
 
 # Particle Filtering Tractography
-pft_streamlines = ParticleFilteringTracking(dg,
-                                            cmc_classifier,
-                                            seeds,
-                                            affine,
-                                            max_cross=1,
-                                            step_size=step_size,
-                                            maxlen=1000,
-                                            pft_back_tracking_dist=2,
-                                            pft_front_tracking_dist=1,
-                                            pft_nbr_particles=15,
-                                            return_all=False)
-streamlines = [s for s in pft_streamlines]
-save_trk("pft_streamline.trk", streamlines, affine, shape)
+for i in range(10):
+    start = datetime.now()
+    pft_streamlines = ParticleFilteringTracking(dg,
+                                                cmc_classifier,
+                                                seeds,
+                                                affine,
+                                                max_cross=1,
+                                                step_size=step_size,
+                                                maxlen=1000,
+                                                pft_back_tracking_dist=2,
+                                                pft_front_tracking_dist=1,
+                                                pft_nbr_particles=15,
+                                                return_all=False)
+    streamlines = [s for s in pft_streamlines]
+    save_trk("pft_streamline.trk", streamlines, affine, shape)
+    print 'time', datetime.now() - start
 
 
 fvtk.clear(ren)
 fvtk.add(ren, fvtk.line(streamlines, line_colors(streamlines)))
 fvtk.record(ren, out_path='pft_streamlines.png', size=(600, 600))
-
-# Local Probabilistic Tractography
-local_prob_streamlines = LocalTracking(dg,
-                                       cmc_classifier,
-                                       seeds,
-                                       affine,
-                                       max_cross=1,
-                                       step_size=step_size,
-                                       maxlen=1000,
-                                       return_all=False)
-streamlines = [s for s in local_prob_streamlines]
-save_trk("local_prob_streamlines.trk", streamlines, affine, shape)
-
-fvtk.clear(ren)
-fvtk.add(ren, fvtk.line(streamlines, line_colors(streamlines)))
-fvtk.record(ren, out_path='probabilistic_local_streamlines.png',
-            size=(600, 600))
 
 
 """

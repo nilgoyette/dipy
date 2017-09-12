@@ -1,10 +1,13 @@
-cimport cython
 
+from random import random
+
+cimport cython
 cimport numpy as np
 import numpy as np
 from .direction_getter cimport DirectionGetter
-from .tissue_classifier cimport(TissueClassifier, TissueClass, TRACKPOINT,
-                                ENDPOINT, OUTSIDEIMAGE, INVALIDPOINT)
+from .tissue_classifier cimport(
+    ConstrainedTissueClassifier, TissueClass, TissueClassifier,
+    TRACKPOINT, ENDPOINT, OUTSIDEIMAGE, INVALIDPOINT)
 
 
 cdef extern from "dpy_math.h" nogil:
@@ -85,33 +88,95 @@ cdef inline void copypoint(double * a, double * b) nogil:
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
+cdef inline int where_to_insert(
+        np.float_t* arr,
+        np.float_t number,
+        int size) nogil:
+    cdef:
+        int idx
+        np.float_t current
+    for idx in range(size - 1, -1, -1):
+        current = arr[idx]
+        if number >= current:
+            return idx
+
+    return 0
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cdef inline void cumsum(
+        np.float_t* arr_in,
+        np.float_t* arr_out,
+        int N) nogil:
+    cdef:
+        int i = 0
+        np.float_t sum = 0
+    for i in range(N):
+        sum += arr_in[i]
+        arr_out[i] = sum
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
 @cython.cdivision(True)
-def pft_tracker(np.ndarray[np.float_t, ndim=1] seed,
-                np.ndarray[np.float_t, ndim=1] first_step,
-                np.ndarray[np.float_t, ndim=2, mode='c'] streamline,
-                np.ndarray[np.float_t, ndim=2, mode='c'] directions,
+def pft_tracker(np.float_t[:] seed not None,
+                np.float_t[:] first_step not None,
+                np.float_t[:,:] streamline not None,
+                np.float_t[:,:] directions not None,
                 DirectionGetter dg,
-                TissueClassifier tc,
-                np.ndarray[np.float_t, ndim=1] voxel_size,
+                ConstrainedTissueClassifier tc,
+                np.float_t[:] voxel_size not None,
                 double step_size,
                 int pft_nbr_back_steps,
                 int pft_max_steps,
                 int pft_max_trial,
                 int pft_nbr_particles,
-                np.ndarray[np.float_t, ndim=4, mode='c'] particle_paths,
-                np.ndarray[np.float_t, ndim=4, mode='c'] particle_dirs,
-                np.ndarray[np.float_t, ndim=2, mode='c'] particle_weights,
-                np.ndarray[np.int_t, ndim=3, mode='c'] particle_states):
-
+                np.float_t[:,:,:,:] particle_paths not None,
+                np.float_t[:,:,:,:] particle_dirs not None,
+                np.float_t[:,:] particle_weights not None,
+                np.int_t[:,:,:] particle_states not None,
+                np.float_t[:] weights_cumsum not None):
+    cdef:
+         int i
     if (seed.shape[0] != 3 or first_step.shape[0] != 3 or
             voxel_size.shape[0] != 3 or streamline.shape[1] != 3):
         raise ValueError()
+
+    i, tissue_class = _pft_tracker(
+        seed, first_step, streamline, directions, dg, tc, voxel_size,
+        step_size, pft_nbr_back_steps, pft_max_steps, pft_max_trial,
+        pft_nbr_particles, particle_paths, particle_dirs, particle_weights,
+        particle_states, &weights_cumsum[0])
+
+    return i, tissue_class
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+cdef _pft_tracker(np.float_t[:] seed,
+                  np.float_t[:] first_step,
+                  np.float_t[:,:] streamline,
+                  np.float_t[:,:] directions,
+                  DirectionGetter dg,
+                  ConstrainedTissueClassifier tc,
+                  np.float_t[:] voxel_size,
+                  double step_size,
+                  int pft_nbr_back_steps,
+                  int pft_max_steps,
+                  int pft_max_trial,
+                  int pft_nbr_particles,
+                  np.float_t[:,:,:,:] particle_paths,
+                  np.float_t[:,:,:,:] particle_dirs,
+                  np.float_t[:,:] particle_weights,
+                  np.int_t[:,:,:] particle_states,
+                  np.float_t* weights_cumsum):
     cdef:
         int i, pft_trial, pft_streamline_i, pft_nbr_steps
         TissueClass tissue_class
         double point[3], dir[3], vs[3], voxdir[3]
         double[::1] pview = point, dview = dir
-        void (*step)(double * , double*, double) nogil
     pft_trial = 0
 
     for j in range(3):
@@ -146,19 +211,21 @@ def pft_tracker(np.ndarray[np.float_t, ndim=1] seed,
                 pft_streamline_i = min(i - 1, pft_nbr_back_steps)
                 pft_nbr_steps = min(pft_max_steps,
                                     streamline.shape[0] - pft_streamline_i - 1)
-                tissue_class, i = _pft(streamline,
-                                       pft_streamline_i,
-                                       directions,
-                                       dg,
-                                       tc,
-                                       voxel_size,
-                                       step_size,
-                                       pft_nbr_steps,
-                                       pft_nbr_particles,
-                                       particle_paths,
-                                       particle_dirs,
-                                       particle_weights,
-                                       particle_states)
+                i = _pft(streamline,
+                         pft_streamline_i,
+                         directions,
+                         dg,
+                         tc,
+                         voxel_size,
+                         step_size,
+                         pft_nbr_steps,
+                         pft_nbr_particles,
+                         particle_paths,
+                         particle_dirs,
+                         particle_weights,
+                         particle_states,
+                         weights_cumsum,
+                         &tissue_class)
 
                 pft_trial += 1
                 # update the current point
@@ -173,33 +240,40 @@ def pft_tracker(np.ndarray[np.float_t, ndim=1] seed,
                 break
         elif tissue_class == OUTSIDEIMAGE:
             break
+
     return i, tissue_class
 
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.cdivision(True)
-cdef _pft(np.ndarray[np.float_t, ndim=2, mode='c'] streamline,
-          int streamline_i,
-          np.ndarray[np.float_t, ndim=2, mode='c'] directions,
-          DirectionGetter dg,
-          TissueClassifier tc,
-          np.ndarray[np.float_t, ndim=1] voxel_size,
-          double step_size,
-          int pft_nbr_steps,
-          int pft_nbr_particles,
-          np.ndarray[np.float_t, ndim=4, mode='c'] particle_paths,
-          np.ndarray[np.float_t, ndim=4, mode='c'] particle_dirs,
-          np.ndarray[np.float_t, ndim=2, mode='c'] particle_weights,
-          np.ndarray[np.int_t, ndim=3, mode='c'] particle_states):
+cdef int _pft(
+        np.float_t[:,:] streamline,
+        int streamline_i,
+        np.float_t[:,:] directions,
+        DirectionGetter dg,
+        ConstrainedTissueClassifier tc,
+        np.float_t[:] voxel_size,
+        double step_size,
+        int pft_nbr_steps,
+        int pft_nbr_particles,
+        np.float_t[:,:,:,:] particle_paths,
+        np.float_t[:,:,:,:] particle_dirs,
+        np.float_t[:,:] particle_weights,
+        np.int_t[:,:,:] particle_states,
+        np.float_t* weights_cumsum,
+        TissueClass* tissue_class):
     cdef:
+        np.float_t one_on_nbr_particles = 1.0 / pft_nbr_particles
+        np.float_t nbr_particles_on_10 =  pft_nbr_particles / 10.0
         double sum_weights, sum_squared, N_effective
         double point[3], dir[3], vs[3], voxdir[3]
         double[::1] pview = point, dview = dir
-        int s, p, j
+        int s, p, p_source, j
 
     if pft_nbr_steps <= 0:
-        return INVALIDPOINT, streamline_i
+        tissue_class[0] = INVALIDPOINT
+        return streamline_i
 
     for j in range(3):
         vs[j] = voxel_size[j]
@@ -208,7 +282,7 @@ cdef _pft(np.ndarray[np.float_t, ndim=2, mode='c'] streamline,
         for j in range(3):
             particle_paths[0, p, 0, j] = streamline[streamline_i, j]
             particle_dirs[0, p, 0, j] = directions[streamline_i, j]
-        particle_weights[0, p] = 1. / pft_nbr_particles
+        particle_weights[0, p] = one_on_nbr_particles
         particle_states[0, p, 0] = TRACKPOINT
         particle_states[0, p, 1] = 0
 
@@ -250,43 +324,45 @@ cdef _pft(np.ndarray[np.float_t, ndim=2, mode='c'] streamline,
 
         # Resample the particles if the weights are too uneven.
         # Particles with negligable weights are replaced by duplicates of
-        # those with high weigths through resamplingip
-        N_effective = 1. / sum_squared
-        if N_effective < pft_nbr_particles / 10.:
+        # those with high weigths through resampling
+        N_effective = 1.0 / sum_squared
+        if N_effective < nbr_particles_on_10:
             # copy data in the temp arrays
             for pp in range(pft_nbr_particles):
                 for ss in range(pft_nbr_steps):
                     for j in range(3):
-                        particle_paths[1, pp, ss,
-                                       j] = particle_paths[0, pp, ss, j]
-                        particle_dirs[1, pp, ss,
-                                      j] = particle_dirs[0, pp, ss, j]
+                        particle_paths[1, pp, ss, j] =\
+                            particle_paths[0, pp, ss, j]
+                        particle_dirs[1, pp, ss, j] =\
+                            particle_dirs[0, pp, ss, j]
                 particle_weights[1, pp] = particle_weights[0, pp]
                 particle_states[1, pp, 0] = particle_states[0, pp, 0]
                 particle_states[1, pp, 1] = particle_states[0, pp, 1]
             # sample N new particle
+            cumsum(&particle_weights[1, 0], weights_cumsum, pft_nbr_particles)
             for pp in range(pft_nbr_particles):
-                p_source = particle_weights[1, :].cumsum().searchsorted(
-                    np.random.random(), 'right')
+                p_source = where_to_insert(
+                    weights_cumsum, random(), pft_nbr_particles)
                 for ss in range(pft_nbr_steps):
                     for j in range(3):
-                        particle_paths[0, pp, ss,
-                                       j] = particle_paths[1, p_source, ss, j]
-                        particle_dirs[0, pp, ss,
-                                      j] = particle_dirs[1, p_source, ss, j]
+                        particle_paths[0, pp, ss, j] =\
+                            particle_paths[1, p_source, ss, j]
+                        particle_dirs[0, pp, ss, j] =\
+                            particle_dirs[1, p_source, ss, j]
                 particle_states[0, pp, 0] = particle_states[1, p_source, 0]
                 particle_states[0, pp, 1] = particle_states[1, p_source, 1]
-                particle_weights[0, pp] = 1. / pft_nbr_particles
+                particle_weights[0, pp] = one_on_nbr_particles
 
     # update the streamline with the trajectory of one particle
-    p = particle_weights[0, :].cumsum().searchsorted(
-        np.random.random(), 'right')
+    cumsum(&particle_weights[0, 0], weights_cumsum, pft_nbr_particles)
+    p = where_to_insert(weights_cumsum, random(), pft_nbr_particles)
     for s in range(particle_states[0, p, 1]):
         for j in range(3):
             streamline[streamline_i + s, j] = particle_paths[0, p, s, j]
             directions[streamline_i + s, j] = particle_dirs[0, p, s, j]
-    return particle_states[0, p, 0], streamline_i + \
-        particle_states[0, p, 1] - 1
+
+    tissue_class[0] = <TissueClass>particle_states[0, p, 0]
+    return streamline_i + particle_states[0, p, 1] - 1
 
 
 @cython.boundscheck(False)

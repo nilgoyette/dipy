@@ -182,7 +182,7 @@ class ParticleFilteringTracking(LocalTracking):
             the back track distance. The total particle filtering tractography
             distance is equal to back_tracking_dist + front_tracking_dist. By
             default this is set to 1 mm. By default this is set to 1 mm.
-        pft_pft_max_trial : int
+        pft_max_trial : int
             Maximum number of trial for the particle filtering tractography
             (Prevents infinit loops).
         pft_nbr_particles : int
@@ -215,6 +215,7 @@ class ParticleFilteringTracking(LocalTracking):
         self.particle_dirs = np.empty((2, self.pft_nbr_particles,
                                        self.pft_max_steps + 1, 3),
                                       dtype=float)
+        self.weights_cumsum = np.empty((pft_nbr_particles,), dtype=float)
         self.particle_states = np.empty((2, self.pft_nbr_particles, 2),
                                         dtype=int)
         super(ParticleFilteringTracking, self).__init__(direction_getter,
@@ -243,4 +244,5 @@ class ParticleFilteringTracking(LocalTracking):
                            self.particle_paths,
                            self.particle_dirs,
                            self.particle_weights,
-                           self.particle_states)
+                           self.particle_states,
+                           self.weights_cumsum)
